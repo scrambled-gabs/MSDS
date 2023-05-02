@@ -1,0 +1,138 @@
+---
+title: "NYPD Shooting Incident Data Report"
+output:
+  pdf_document: default
+  html_document: default
+date: '2023-04-26'
+---
+
+This is a report regarding the shooting incidents in New York City, the dataset NYPD Shooting Incident Data (Historic) comes from website Data.gov
+```{r setup}
+library(tidyverse)
+library(readr)
+library(knitr)
+data_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+dataset <- read_csv(data_url)
+```
+
+
+I prepare the dataset by dropping unnecessary columns in my dataset and change datatype to appropriate ones. Then I look for the missing values in the dataset, here the missing values only appeared in PERP_SEX, PERP_RACE after dropping irrelevant columns, so I chose to further drop the PERP_SEX, PERP_RACE column that contains missing values.
+```{r tidy&transform}
+# Drop any unnecessary columns
+library(dplyr)
+dataset <- dataset %>% select(-c(OCCUR_TIME, INCIDENT_KEY, JURISDICTION_CODE, 
+                                 LOC_OF_OCCUR_DESC, PRECINCT, LOC_CLASSFCTN_DESC,
+                                 PERP_AGE_GROUP, VIC_AGE_GROUP, LOCATION_DESC, X_COORD_CD,
+                                 Y_COORD_CD, Latitude, Longitude, Lon_Lat))
+
+# Change variables in the dataset to appropriate datatype
+library(lubridate)
+dataset <- dataset %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+dataset
+
+# Look for the nuumber of missing values in each column
+missing_val <- sapply(dataset, function(dataset) sum(is.na(dataset)))
+missing_val
+
+# Drop PERP_SEX, PERP_RACE
+dataset_cleaned <- dataset %>% select(-c(PERP_SEX, PERP_RACE))
+
+summary(dataset_cleaned)
+```
+
+
+I now wanna create a plot that shows the trends of shooting incidents in NYC and each borough over the years.
+```{r viz1}
+
+# Calculate the total incidents in entire nyc
+dataset_year_nyc <- dataset_cleaned %>%
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(OCCUR_YEAR) %>%
+  summarize(incidents = n()) %>%
+  mutate(BORO = "NYC")
+
+# Group the data by year and boro
+dataset_year_boro <- dataset_cleaned %>% 
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(OCCUR_YEAR, BORO) %>%
+  summarize(incidents = n(),
+            .groups = "drop"
+            )
+
+# combine the nyc with the rest of dataset
+comb_dataset <- rbind(dataset_year_nyc, dataset_year_boro)
+
+# Create a line plot to visualize the data
+ggplot(comb_dataset, aes(x = OCCUR_YEAR, y = incidents, color = BORO)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1) +
+  labs(title = "Shooting incidents in NYC and Boroughs (2006-2022)",
+       x = "Year",
+       y = "Number of incidents") +
+  scale_color_discrete(name = "") +
+  theme_minimal()
+```
+
+
+I'm also curious about the trends of incidents that involve murder.
+```{r viz2}
+# count the murder related incidents in NYC through the years
+dataset_murder_nyc <- dataset_cleaned %>%
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(OCCUR_YEAR) %>%
+  summarize(murder_incidents = sum(STATISTICAL_MURDER_FLAG),
+            .groups = "drop") %>%
+  mutate(BORO = "NYC")
+
+# count the muder incidents in each boro
+dataset_murder_boro <- dataset_cleaned %>%
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(OCCUR_YEAR, BORO) %>%
+  summarize(murder_incidents = sum(STATISTICAL_MURDER_FLAG),
+            .groups = "drop")
+
+# bind the datasets
+murder_dataset <- rbind(dataset_murder_nyc, dataset_murder_boro)
+
+# create a line plot to visualize the data
+ggplot(murder_dataset, aes(x = OCCUR_YEAR, y = murder_incidents, color = BORO)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1) +
+  labs(title = "Murder related incidents in NYC and Boroughs (2006-2022)",
+       x = "Year",
+       y = "Number of murder related incidents") +
+  scale_color_discrete(name = "") +
+  theme_minimal()
+```
+
+
+I then want to use linear regression to further explore the relationship between murder related incidents and the boroughs.
+```{r regression modeling}
+# fit a linear regression model
+lr_model <- lm(murder_incidents ~ BORO, data = dataset_murder_boro)
+
+# plot the regression line on a scatterplot
+ggplot(dataset_murder_boro, aes(x = BORO, y = murder_incidents)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Murder related incidents in NYC boroughs",
+       x = "Borough",
+       y = "Number of murder related incidents") +
+  theme_minimal()
+
+
+# check summary for result
+summary(lr_model)
+```
+
+From the first plot, we can see that the number of shooting incidents in NYC started declining around 2011 and was at lowest around 2016-2018. The number of shooting incident were highest in 2006 and 2020, with each borough exhibiting similar trends except for Staten island, which has a rather steady number of incidents.
+The second plot of shooting incidents related to murder have shown a similar trends.
+
+The regression analysis shows that there is a correlation between murder related incidents in the NYC Burroughs. The p-value indicates that the relationship is statistically significant, and the adjusted R squared value signifies that 73.62% of the variation in murder incidents is explained by variation in boroughs. 
+
+As for the bias within the dataset, I believe the data from Data.gov should be accurate and reliable, and therefore I think there should be a lower chance for sampling and measurement bias. However, there could be many other confounding variables that are associated with both murder related incidents and boroughs, such as socioeconomic status or population density, that could lead to bias.
+
+My personal beliefs in social justice and politics, specifically my understanding of certain demographic attributes (e.g. race, gender, socioeconomic status, etc.) of different boroughs, could also lead to bias when interpreting the result. 
+
+This report has lead to some other interesting questions such as: What happened around 2020 that lead to the surge of shooting incidents? Are there other variables that may explain the correlation between murder related incidents and boroughs? Why did the number of shooting incidents in Staten island did not show a trend like other boroughs? 
+
